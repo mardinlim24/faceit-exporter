@@ -1,129 +1,162 @@
 import ExcelJS from "exceljs";
 
-function extractMatchId(url) {
-  const match = url.match(/\/room\/([^/]+)\/scoreboard/i);
-  if (match) return match[1];
-  if (url.startsWith("1-")) return url;
-  throw new Error("Invalid FACEIT link");
+function extractMatchId(input) {
+  const url = String(input || "").trim();
+  const m = url.match(/\/room\/([^/]+)\/scoreboard/i);
+  if (m) return m[1];
+  if (url.startsWith("1-") && url.length > 10) return url;
+  throw new Error("Invalid FACEIT link. Paste the scoreboard URL or match id.");
 }
 
-async function getMatchData(matchId, apiKey) {
-  const matchRes = await fetch(
-    `https://open.faceit.com/data/v4/matches/${matchId}`,
-    { headers: { Authorization: `Bearer ${apiKey}` } }
-  );
+function pick(obj, keys, fallback = "") {
+  for (const k of keys) {
+    if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
+  }
+  return fallback;
+}
 
-  const statsRes = await fetch(
-    `https://open.faceit.com/data/v4/matches/${matchId}/stats`,
-    { headers: { Authorization: `Bearer ${apiKey}` } }
-  );
-
-  if (!matchRes.ok || !statsRes.ok)
-    throw new Error("FACEIT API error");
-
-  return {
-    match: await matchRes.json(),
-    stats: await statsRes.json()
-  };
+async function faceitFetchJson(url, apiKey) {
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  const text = await r.text();
+  if (!r.ok) {
+    throw new Error(`FACEIT API ${r.status}: ${text}`);
+  }
+  return JSON.parse(text);
 }
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST")
-      return res.status(405).send("Method not allowed");
+    if (req.method !== "POST") return res.status(405).send("Method not allowed");
 
-    const { url } = req.body;
-    const apiKey = process.env.FACEIT_API_KEY;
-
+    const { url } = req.body || {};
     const matchId = extractMatchId(url);
-    const { match, stats } = await getMatchData(matchId, apiKey);
 
-    const workbook = new ExcelJS.Workbook();
+    // Support BOTH env var names just in case you used a different one in Vercel
+    const apiKey = process.env.FACEIT_API_KEY || process.env.FACEIT_API_KEY;
+    if (!apiKey) return res.status(500).send("Missing API key. Set FACEIT_API_KEY in Vercel Environment Variables.");
 
-    // =====================
-    // Match Summary Sheet
-    // =====================
+    // Fetch match details + stats
+    const match = await faceitFetchJson(`https://open.faceit.com/data/v4/matches/${matchId}`, apiKey);
+    const stats = await faceitFetchJson(`https://open.faceit.com/data/v4/matches/${matchId}/stats`, apiKey);
 
-    const summary = workbook.addWorksheet("Match Summary");
+    const wb = new ExcelJS.Workbook();
 
-    summary.addRow(["Team 1", match.teams.faction1.name]);
-    summary.addRow(["Team 2", match.teams.faction2.name]);
-    summary.addRow(["Score", match.results.score.faction1 + " - " + match.results.score.faction2]);
-    summary.addRow(["Winner", match.results.winner]);
-    summary.addRow(["Region", match.region]);
-    summary.addRow(["Competition", match.competition.name]);
+    // ======================
+    // Sheet: Match Summary
+    // ======================
+    const summary = wb.addWorksheet("Match Summary");
+    const team1 = match?.teams?.faction1?.name || "faction1";
+    const team2 = match?.teams?.faction2?.name || "faction2";
 
-    summary.getColumn(1).width = 20;
-    summary.getColumn(2).width = 30;
+    const score1 = match?.results?.score?.faction1 ?? "";
+    const score2 = match?.results?.score?.faction2 ?? "";
+    const winner = match?.results?.winner ?? "";
+    const region = match?.region ?? "";
+    const competition = match?.competition?.name ?? "";
+    const bestOf = match?.best_of ?? "";
+    const status = match?.status ?? "";
 
-    // =====================
-    // Player Stats Sheet
-    // =====================
+    summary.getColumn(1).width = 22;
+    summary.getColumn(2).width = 46;
 
-    const sheet = workbook.addWorksheet("Player Stats");
+    summary.addRow(["Match ID", matchId]);
+    summary.addRow(["Team 1", team1]);
+    summary.addRow(["Team 2", team2]);
+    summary.addRow(["Score", `${score1} - ${score2}`]);
+    summary.addRow(["Winner", winner]);
+    summary.addRow(["Best Of", bestOf]);
+    summary.addRow(["Status", status]);
+    summary.addRow(["Region", region]);
+    summary.addRow(["Competition", competition]);
 
-    sheet.columns = [
+    summary.getRow(1).font = { bold: true };
+
+    // ======================
+    // Sheet: Player Stats
+    // ======================
+    const sh = wb.addWorksheet("Player Stats");
+    sh.columns = [
       { header: "Team", key: "team", width: 20 },
       { header: "Nickname", key: "nickname", width: 20 },
       { header: "Rank", key: "rank", width: 10 },
       { header: "RWS", key: "rws", width: 10 },
-      { header: "Kills", key: "kills", width: 10 },
-      { header: "Deaths", key: "deaths", width: 10 },
-      { header: "Assists", key: "assists", width: 10 },
+      { header: "K", key: "kills", width: 8 },
+      { header: "D", key: "deaths", width: 8 },
+      { header: "A", key: "assists", width: 8 },
       { header: "ADR", key: "adr", width: 10 },
       { header: "K/D", key: "kd", width: 10 },
       { header: "K/R", key: "kr", width: 10 },
-      { header: "HS", key: "hs", width: 10 },
-      { header: "HS%", key: "hspercent", width: 10 },
-      { header: "5k", key: "k5", width: 10 },
-      { header: "4k", key: "k4", width: 10 },
-      { header: "3k", key: "k3", width: 10 },
-      { header: "2k", key: "k2", width: 10 },
-      { header: "MVPs", key: "mvps", width: 10 }
+      { header: "HS", key: "hs", width: 8 },
+      { header: "HS %", key: "hs_pct", width: 10 },
+      { header: "5k", key: "k5", width: 8 },
+      { header: "4k", key: "k4", width: 8 },
+      { header: "3k", key: "k3", width: 8 },
+      { header: "2k", key: "k2", width: 8 },
+      { header: "MVPs", key: "mvps", width: 10 },
     ];
 
-    stats.rounds[0].teams.forEach(team => {
-      team.players.forEach(player => {
-        const s = player.player_stats;
+    // Header styling
+    sh.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+    sh.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF111111" } };
+    sh.views = [{ state: "frozen", ySplit: 1 }];
+    sh.autoFilter = { from: "A1", to: "Q1" };
 
-        sheet.addRow({
-          team: team.team_stats.Team,
-          nickname: player.nickname,
-          rank: player.game_player_id,
-          rws: s.RWS,
-          kills: s.Kills,
-          deaths: s.Deaths,
-          assists: s.Assists,
-          adr: s.ADR,
-          kd: s["K/D Ratio"],
-          kr: s["K/R Ratio"],
-          hs: s.Headshots,
-          hspercent: s["Headshots %"],
-          k5: s["Penta Kills"],
-          k4: s["Quadro Kills"],
-          k3: s["Triple Kills"],
-          k2: s["Double Kills"],
-          mvps: s.MVPs
+    // Parse stats safely: rounds[0] usually exists
+    const round0 = (stats?.rounds && stats.rounds[0]) ? stats.rounds[0] : null;
+    if (!round0 || !round0.teams) {
+      return res.status(400).send("No rounds/teams found in FACEIT stats for this match.");
+    }
+
+    for (const team of round0.teams) {
+      const teamName =
+        pick(team?.team_stats, ["Team", "team", "Name", "name"], "") ||
+        team?.team_id ||
+        "";
+
+      for (const player of (team.players || [])) {
+        const ps = player.player_stats || {};
+
+        sh.addRow({
+          team: teamName,
+          nickname: player.nickname || "",
+          rank: pick(player, ["game_player_id", "player_id"], ""),
+          rws: pick(ps, ["RWS", "rws"], ""),
+          kills: pick(ps, ["Kills", "kills"], ""),
+          deaths: pick(ps, ["Deaths", "deaths"], ""),
+          assists: pick(ps, ["Assists", "assists"], ""),
+          adr: pick(ps, ["ADR", "Average Damage per Round", "avg_damage_per_round"], ""),
+          kd: pick(ps, ["K/D Ratio", "K/D", "kd_ratio"], ""),
+          kr: pick(ps, ["K/R Ratio", "K/R", "kr_ratio"], ""),
+          hs: pick(ps, ["Headshots", "HS", "headshots"], ""),
+          hs_pct: pick(ps, ["Headshots %", "HS %", "hs_percentage"], ""),
+          k5: pick(ps, ["Penta Kills", "5K", "penta_kills"], 0),
+          k4: pick(ps, ["Quadro Kills", "4K", "quadro_kills"], 0),
+          k3: pick(ps, ["Triple Kills", "3K", "triple_kills"], 0),
+          k2: pick(ps, ["Double Kills", "2K", "double_kills"], 0),
+          mvps: pick(ps, ["MVPs", "MVP", "mvps"], 0),
         });
-      });
-    });
+      }
+    }
 
-    sheet.getRow(1).font = { bold: true };
+    // Optional: sort by RWS desc if numeric
+    // (Excel will still open fine even if strings)
+    // You can ignore this if you don't care about sorting.
 
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="faceit_full_stats.xlsx"`
+      'attachment; filename="faceit_full_stats.xlsx"'
     );
 
-    await workbook.xlsx.write(res);
+    await wb.xlsx.write(res);
     res.end();
-
   } catch (error) {
-    res.status(400).send(error.message);
+    console.error(error); // so you see details in Vercel Logs
+    res.status(400).send(error?.message || "Error");
   }
 }
