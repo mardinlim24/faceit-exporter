@@ -16,32 +16,38 @@
     Generate Excel
   </button>
 
-  <pre id="msg" style="margin-top:20px;"></pre>
+  <pre id="msg" style="margin-top:20px; white-space:pre-wrap;"></pre>
 
   <script>
     async function generate() {
-      const url = document.getElementById("url").value;
+      const url = document.getElementById("url").value.trim();
       const msg = document.getElementById("msg");
       msg.innerText = "Processing...";
 
-      const res = await fetch("/api/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url })
-      });
+      try {
+        const res = await fetch("/api/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
 
-      if (!res.ok) {
-        msg.innerText = "Error occurred";
-        return;
+        // IMPORTANT: show real error message (not just "Error occurred")
+        if (!res.ok) {
+          const text = await res.text();
+          msg.innerText = text || ("Request failed with status " + res.status);
+          return;
+        }
+
+        const blob = await res.blob();
+        const link = document.createElement("a");
+        link.href = window.URL.createObjectURL(blob);
+        link.download = "faceit_full_stats.xlsx";
+        link.click();
+
+        msg.innerText = "Done ✅";
+      } catch (e) {
+        msg.innerText = String(e);
       }
-
-      const blob = await res.blob();
-      const link = document.createElement("a");
-      link.href = window.URL.createObjectURL(blob);
-      link.download = "faceit_stats.xlsx";
-      link.click();
-
-      msg.innerText = "Done ✅";
     }
   </script>
 
