@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>FACEIT → Excel</title>
+</head>
+<body style="font-family:Arial; padding:40px; max-width:800px; margin:auto;">
+
+  <h2>FACEIT CS2 → Excel Exporter</h2>
+
+  <input id="url" style="width:100%; padding:12px; font-size:16px;"
+         placeholder="Paste FACEIT match link here">
+
+  <button onclick="generate()" style="margin-top:15px; padding:10px 20px;">
+    Generate Excel
+  </button>
+
+  <pre id="msg" style="margin-top:20px;"></pre>
+
+  <script>
+    async function generate() {
+      const url = document.getElementById("url").value;
+      const msg = document.getElementById("msg");
+      msg.innerText = "Processing...";
+
+      const res = await fetch("/api/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url })
+      });
+
+      if (!res.ok) {
+        msg.innerText = "Error occurred";
+        return;
+      }
+
+      const blob = await res.blob();
+      const link = document.createElement("a");
+      link.href = window.URL.createObjectURL(blob);
+      link.download = "faceit_stats.xlsx";
+      link.click();
+
+      msg.innerText = "Done ✅";
+    }
+  </script>
+
+</body>
+</html>
